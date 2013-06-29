@@ -31,9 +31,6 @@ void testboxes()
 
 	MessageBox(NULL, _T("This is a DEMO version of Aero Glass for Win8 v0.94.\n!!! USE AT YOUR OWN RISK !!!\n\n") 
 		_T("Copyright (C) 2013 by Big Muscle"), _T("Aero Glass for DWM"), MB_OK | MB_ICONINFORMATION);
-
-	MessageBox(NULL, _T("Windows could not find a file for this theme. Do you still ") 
-		_T("want to save it? (or whatever the message was)"), _T("Save a Theme"), MB_YESNO | MB_ICONERROR);
 }
 
 int _tmain(int argc, _TCHAR *argv[])
