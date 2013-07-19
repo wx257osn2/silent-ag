@@ -18,11 +18,45 @@
 */
 
 #include "utils.h"
+#include <tchar.h>
 
 namespace utils
 {
 	std::wostream& wendl(std::wostream& out) 
 	{
 		return out.put(L'\r').put(L'\n').flush();
+	}
+
+	FARPROC SafeGetProcAddress(HMODULE module, LPCSTR name)
+	{
+		// credits to Nigel Bree for this workaround to GetProcAdress redirection
+		// not sure if it's actually needed but sometimes GetProcAddress calls are redirected 
+		// to apphelp.dll or something for no reason
+
+		typedef unsigned long (WINAPI *LGPA)(LPVOID base,
+			ANSI_STRING *name, DWORD ordinal, LPVOID *result);
+
+		static LGPA lgpa;
+		static HMODULE ntdll;
+
+		if (!ntdll)
+		{
+			ntdll = GetModuleHandle(_T("NTDLL.DLL"));
+			lgpa = reinterpret_cast<LGPA>(GetProcAddress(ntdll, "LdrGetProcedureAddress"));
+		}
+
+		ANSI_STRING proc;
+		proc.Length = strlen(name);
+		proc.MaximumLength = proc.Length + 1;
+		proc.Buffer = const_cast<PCHAR>(name);
+
+		LPVOID result;
+		NTSTATUS status;
+		status = (*lgpa)(module, & proc, 0, &result);
+		
+		if (status)
+			return 0;
+
+		return reinterpret_cast<FARPROC>(result);
 	}
 }

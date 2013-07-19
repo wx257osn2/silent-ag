@@ -20,6 +20,9 @@
 #pragma once
 
 #include <iostream>
+#include <Windows.h>
+#include <winternl.h>
+#include <stddef.h>
 
 #if _UNICODE
 #define tcout wcout
@@ -30,4 +33,5 @@
 namespace utils
 {
 	std::wostream& wendl(std::wostream& out);
+	FARPROC SafeGetProcAddress(HMODULE module, LPCSTR name);
 }

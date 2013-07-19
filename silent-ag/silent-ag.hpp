@@ -30,8 +30,8 @@ namespace silentag
 		static void detach();
 		
 	protected:
-		typedef int (WINAPI *pfnMessageBox)(_In_opt_ HWND hWnd, _In_opt_ LPCTSTR lpText, 
-			_In_opt_  LPCTSTR lpCaption, _In_ UINT uType);
+		typedef int (WINAPI *pfnMessageBox)(_In_ HWND hWnd, _In_ LPCTSTR lpText, 
+			_In_ LPCTSTR lpCaption, _In_ UINT uType, _In_ WORD wLanguageId, _In_ DWORD dwMilliseconds);
 
 		static LPCTSTR appname;
 		static LPVOID pMessageBoxProc;
@@ -41,8 +41,7 @@ namespace silentag
 		static BYTE trampoline_MessageBox[21];
 
 		hook();
-		static int WINAPI hook_MessageBox(_In_opt_ HWND hWnd, _In_opt_ LPCTSTR lpText, 
-			_In_opt_  LPCTSTR lpCaption, _In_ UINT uType);
-		static FARPROC SafeGetProcAddress(HMODULE module, LPCSTR name);
+		static int WINAPI hook_MessageBox(_In_ HWND hWnd, _In_ LPCTSTR lpText, 
+			_In_ LPCTSTR lpCaption, _In_ UINT uType, _In_ WORD wLanguageId, _In_ DWORD dwMilliseconds);
 	};
 }

@@ -25,16 +25,45 @@
 #include <Windows.h>
 #include <tchar.h>
 
+typedef int (WINAPI *pfnMessageBoxTimeout)(_In_ HWND hWnd, _In_ LPCTSTR lpText, 
+	_In_ LPCTSTR lpCaption, _In_ UINT uType, _In_ WORD wLanguageId, _In_ DWORD dwMilliseconds);
+
+int MessageBoxTimeout(_In_ HWND hWnd, _In_ LPCTSTR lpText, 
+	_In_ LPCTSTR lpCaption, _In_ UINT uType, _In_ WORD wLanguageId, _In_ DWORD dwMilliseconds)
+{
+	static pfnMessageBoxTimeout pMessageBoxTimeout = NULL;
+
+	if (!pMessageBoxTimeout)
+	{
+	#if _UNICODE
+		pMessageBoxTimeout = reinterpret_cast<pfnMessageBoxTimeout>(utils::SafeGetProcAddress(GetModuleHandle(_T("user32.dll")), "MessageBoxTimeoutW"));
+	#else
+		pMessageBoxTimeout = reinterpret_cast<pfnMessageBoxTimeout>(utils::SafeGetProcAddress(GetModuleHandle(_T("user32.dll")), "MessageBoxTimeoutA"));
+	#endif
+
+		// getprocaddress failed
+		if (!pMessageBoxTimeout)
+		{
+			std::tcout << _T("failed to get the proc address for MessageBoxTimeout") << utils::wendl;
+			std::cin.get();
+			exit(0);
+		}
+	}
+
+	return pMessageBoxTimeout(hWnd, lpText, lpCaption, uType, wLanguageId, dwMilliseconds);
+}
+
 void testboxes()
 {
-	MessageBox(NULL, _T("This messagebox should remain uncaught"), _T("Some messagebox"), MB_OK | MB_ICONINFORMATION);
+	MessageBoxTimeout(NULL, _T("This messagebox should remain uncaught"), _T("Some messagebox"), MB_OK | MB_ICONINFORMATION, 0, 0x7FFFFFFF);
 
-	MessageBox(NULL, _T("This is a DEMO version of Aero Glass for Win8 v0.94.\n!!! USE AT YOUR OWN RISK !!!\n\n") 
-		_T("Copyright (C) 2013 by Big Muscle"), _T("Aero Glass for DWM"), MB_OK | MB_ICONINFORMATION);
+	MessageBoxTimeout(NULL, _T("This is a DEMO version of Aero Glass for Win8 v0.95.\n!!! USE AT YOUR OWN RISK !!!\n\n") 
+		_T("Copyright (C) 2013 by Big Muscle"), _T("Aero Glass for DWM"), MB_OK | MB_ICONINFORMATION, 0, 0x7FFFFFFF);
 }
 
 int _tmain(int argc, _TCHAR *argv[])
 {
+	LoadLibrary(_T("user32.dll")); // console apps don't load user32 unless you call stuff from it
 	std::tcout << _T("starting the un-hooked test") << utils::wendl;
 	testboxes();
 	std::tcout << _T("simulating dll injection") << utils::wendl;

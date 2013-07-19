@@ -18,18 +18,16 @@
 */
 
 #include "silent-ag.hpp"
-
-// NOTE: the test application will crash in release mode (I still don't know why)
-// so if you want to use it, compile in debug or release-debug
-#if _DEBUG || RELEASEDBG
 #include "../silent-ag-test/utils.h"
+
+// NOTE: the test application might crash in release mode (although it seems 
+// to have stopped now) so if it crashes, compile in debug or release-debug
+#if _DEBUG || RELEASEDBG
 #include <iostream>
 #endif
 
 #include <string>
 #include <tchar.h>
-#include <winternl.h>
-#include <stddef.h>
 
 #if _UNICODE
 #define tstring wstring
@@ -57,10 +55,18 @@ namespace silentag
 	LPVOID hook::pRelay = NULL;
 
 	/*
-		MessageBoxW:
+		MessageBoxW (unused at the moment):
 		7FAAF010720 - 48 83 EC 38           - sub rsp,38
 		7FAAF010724 - 45 33 DB              - xor r11d,r11d
 		7FAAF010727 - 44 39 1D 0AD00200     - cmp [7FAAF03D738],r11d
+	*/
+
+	/*
+		MessageBoxTimeoutW:
+		7FF15190638 - FF F3                 - push ebx
+		7FF1519063A - 55                    - push rbp
+		7FF1519063B - 56                    - push rsi
+		7FF1519063C - 57                    - push rdi
 	*/
 
 	/*
@@ -70,28 +76,29 @@ namespace silentag
 		004F000D  - C3                    - ret 
 	*/
 
-	// trampoline to the original api (with 4 trailing zeros that will be replaced by a jmp to MessageBox)
+	// trampoline to the original api with placeholders for the 64-bit jump to the original API
 	BYTE hook::trampoline_MessageBox[] = 
-	{ 
-		0x48, 0x83, 0xEC, 0x38,										// sub rsp,38
-		0x45, 0x33, 0xDB,											// xor r11d,r11d
-		0x68, 0x00, 0x00, 0x00, 0x00,								// push 00000000 ; low DWORD of the ret address
-		0xC7, 0x44, 0x24, 0x04, 0x00, 0x00, 0x00, 0x00,				// mov [rsp+04],00000000 ; high DWORD of the ret address
-		0xC3														// ret
-	};
+    { 
+        0xFF, 0xF3,										// push ebx
+        0x55,											// push rbp
+        0x56,											// push rsi
+        0x57,											// push rdi
+        0x68, 0x00, 0x00, 0x00, 0x00,					// push 00000000 ; low DWORD of the ret address
+        0xC7, 0x44, 0x24, 0x04, 0x00, 0x00, 0x00, 0x00, // mov [rsp+04],00000000 ; high DWORD of the ret address
+        0xC3											// ret
+    };
 
 	hook::hook()
 	{
 		// private ctor to prevent instantation of the static class
 	}
 
-	int WINAPI hook::hook_MessageBox(_In_opt_ HWND hWnd, _In_opt_ LPCTSTR lpText, 
-			_In_opt_ LPCTSTR lpCaption, _In_ UINT uType)
+	int WINAPI hook::hook_MessageBox(_In_ HWND hWnd, _In_ LPCTSTR lpText, 
+		_In_ LPCTSTR lpCaption, _In_ UINT uType, _In_ WORD wLanguageId, _In_ DWORD dwMilliseconds)
 	{
 		// hooked MessageBox
 		// filters out the Aero Glass demo version message
 
-		std::tstring caption(lpCaption);
 		std::tstring text(lpText);
 
 		#if _DEBUG || RELEASEDBG
@@ -103,40 +110,7 @@ namespace silentag
 			return IDOK;
 
 		// forward the call to the original api
-		return hook::pMessageBox(hWnd, lpText, lpCaption, uType);
-	}
-
-	FARPROC hook::SafeGetProcAddress(HMODULE module, LPCSTR name)
-	{
-		// credits to Nigel Bree for this workaround to GetProcAdress redirection
-		// not sure if it's actually needed but sometimes GetProcAddress calls are redirected 
-		// to apphelp.dll or something for no reason
-
-		typedef unsigned long (WINAPI *LGPA)(LPVOID base,
-			ANSI_STRING *name, DWORD ordinal, LPVOID *result);
-
-		static LGPA lgpa;
-		static HMODULE ntdll;
-
-		if (!ntdll)
-		{
-			ntdll = GetModuleHandle(_T("NTDLL.DLL"));
-			lgpa = reinterpret_cast<LGPA>(GetProcAddress(ntdll, "LdrGetProcedureAddress"));
-		}
-
-		ANSI_STRING proc;
-		proc.Length = strlen(name);
-		proc.MaximumLength = proc.Length + 1;
-		proc.Buffer = const_cast<PCHAR>(name);
-
-		LPVOID result;
-		NTSTATUS status;
-		status = (*lgpa)(module, & proc, 0, &result);
-		
-		if (status)
-			return 0;
-
-		return reinterpret_cast<FARPROC>(result);
+		return hook::pMessageBox(hWnd, lpText, lpCaption, uType, wLanguageId, dwMilliseconds);
 	}
 
 	void hook::attach()
@@ -146,25 +120,29 @@ namespace silentag
 
 		while (!pMessageBoxProc)
 		{
-			pMessageBoxProc = SafeGetProcAddress(GetModuleHandle(_T("user32.dll")), "MessageBoxW");
-			Sleep(10);
+		#if _UNICODE
+			pMessageBoxProc = utils::SafeGetProcAddress(GetModuleHandle(_T("user32.dll")), "MessageBoxTimeoutW");
+		#else
+			pMessageBoxProc = utils::SafeGetProcAddress(GetModuleHandle(_T("user32.dll")), "MessageBoxTimeoutA");
+		#endif
 
+			Sleep(10);
 			tries++;
 
 			if (tries > 200)
 			{
 				hook::pMessageBox(NULL, _T("Failed to obtain MessageBoxW proc address"), 
-					appname, MB_OK | MB_ICONWARNING);
+					appname, MB_OK | MB_ICONWARNING, 0, 0x7FFFFFFF);
 				return;
 			}
 		}
 
 		pMessageBox = reinterpret_cast<hook::pfnMessageBox>(hook::pMessageBoxProc);
-		pMessageBoxReturn = reinterpret_cast<LPVOID>(reinterpret_cast<LPBYTE>(hook::pMessageBox) + 7);
+		pMessageBoxReturn = reinterpret_cast<LPVOID>(reinterpret_cast<LPBYTE>(hook::pMessageBox) + 5);
 
 		// trampoline
-		LPDWORD pdwTrampolineRetAddressLow = reinterpret_cast<LPDWORD>(&trampoline_MessageBox[8]);
-		LPDWORD pdwTrampolineRetAddressHigh = reinterpret_cast<LPDWORD>(&trampoline_MessageBox[16]);
+		LPDWORD pdwTrampolineRetAddressLow = reinterpret_cast<LPDWORD>(&trampoline_MessageBox[6]);
+		LPDWORD pdwTrampolineRetAddressHigh = reinterpret_cast<LPDWORD>(&trampoline_MessageBox[14]);
 
 		// relay func
 		LPBYTE pbPush = NULL;
@@ -176,7 +154,6 @@ namespace silentag
 		// MessageBox
 		LPBYTE pbOpcode = reinterpret_cast<LPBYTE>(pMessageBoxProc);
 		LPDWORD pdwDistance = reinterpret_cast<LPDWORD>(pbOpcode + 1);
-		LPWORD pwNops = reinterpret_cast<LPWORD>(pbOpcode + 5);
 
 		// make the trampoline bytecode executable
 		#if _DEBUG || RELEASEDBG
@@ -190,7 +167,7 @@ namespace silentag
 				sizeof(trampoline_MessageBox), PAGE_EXECUTE_READWRITE, &dwOldProtect))
 		{
 			hook::pMessageBox(NULL, _T("Failed to make the trampoline executable"), 
-				appname, MB_OK | MB_ICONWARNING);
+				appname, MB_OK | MB_ICONWARNING, 0, 0x7FFFFFFF);
 			return;
 		}
 
@@ -211,7 +188,7 @@ namespace silentag
 		{
 			// this is probabilly unnecessary because VirtualAlloc already does it, but whatever
 			hook::pMessageBox(NULL, _T("Failed to make memory writable for the relay function"), 
-				appname, MB_OK | MB_ICONWARNING);
+				appname, MB_OK | MB_ICONWARNING, 0, 0x7FFFFFFF);
 			return;
 		}
 
@@ -238,56 +215,55 @@ namespace silentag
 		*pdwRelayAddressHigh = HIDWORD(hook_MessageBox); // higher dword of the hook address
 		*pbRet = 0xC3; // ret
 
-		// make MessageBox writable
-		if (!VirtualProtect(pbOpcode, 7, PAGE_EXECUTE_READWRITE, &dwOldProtect))
+		// make MessageBoxTimeout writable
+		if (!VirtualProtect(pbOpcode, 5, PAGE_EXECUTE_READWRITE, &dwOldProtect))
 		{
-			hook::pMessageBox(NULL, _T("Failed to make MessageBox writable"), appname, MB_OK | MB_ICONWARNING);
+			hook::pMessageBox(NULL, _T("Failed to make MessageBoxTimeout writable"), 
+				appname, MB_OK | MB_ICONWARNING, 0, 0x7FFFFFFF);
 			return;
 		}
 
-		// attempt to hook MessageBox
+		// attempt to hook MessageBoxTimeout
 		// jmp to the relay function allocated near MessageBox
 		#if _DEBUG || RELEASEDBG
-		std::wcout << _T("dll: hooking messagebox") << utils::wendl;
+		std::wcout << _T("dll: hooking messageboxtimeout") << utils::wendl;
 		#endif
 
 		*pbOpcode = 0xE9; // jmp
 		*pdwDistance = jmp(pbOpcode, pRelay); // regular 32-bit jmp to relay funcion
-		*pwNops = 0x9090; // 2 nops to fill the truncated opcode
 
 		if (*pbOpcode != 0xE9)
-			hook::pMessageBox(NULL, _T("Failed to hook MessageBox"), appname, MB_OK | MB_ICONWARNING);
+			hook::pMessageBox(NULL, _T("Failed to hook MessageBoxTimeout"), 
+				appname, MB_OK | MB_ICONWARNING, 0, 0x7FFFFFFF);
 
 		pMessageBox = reinterpret_cast<pfnMessageBox>(&trampoline_MessageBox[0]);
 
 		#if _DEBUG || RELEASEDBG
-		std::wcout << _T("dll: messagebox is now hooked") << utils::wendl;
+		std::wcout << _T("dll: messageboxtimeout is now hooked") << utils::wendl;
 		#endif
 	}
 
 	void hook::detach()
 	{
-		LPDWORD pdwCleanOpcode1 = reinterpret_cast<LPDWORD>(&trampoline_MessageBox[0]);
-		LPWORD pwCleanOpcode2a = reinterpret_cast<LPWORD>(reinterpret_cast<LPBYTE>(pdwCleanOpcode1) + 4);
-		LPBYTE pbCleanOpcode2b = reinterpret_cast<LPBYTE>(pdwCleanOpcode1) + 6;
+		LPBYTE pbCleanOpcode1a = reinterpret_cast<LPBYTE>(&trampoline_MessageBox[0]);
+		LPDWORD pdwCleanOpcode1b = reinterpret_cast<LPDWORD>(reinterpret_cast<LPBYTE>(pbCleanOpcode1a) + 1);
 
-		LPDWORD pdwOpcode1 = reinterpret_cast<LPDWORD>(pMessageBoxProc);
-		LPWORD pwOpcode2a = reinterpret_cast<LPWORD>(reinterpret_cast<LPBYTE>(pdwOpcode1) + 4);
-		LPBYTE pbOpcode2b = reinterpret_cast<LPBYTE>(pdwOpcode1) + 6;
+		LPBYTE pbOpcode1a = reinterpret_cast<LPBYTE>(pMessageBoxProc);
+		LPDWORD pdwOpcode1b = reinterpret_cast<LPDWORD>(reinterpret_cast<LPBYTE>(pbOpcode1a) + 1);
 
 		// attempt to unhook MessageBox
-		*pdwOpcode1 = *pdwCleanOpcode1;
-		*pwOpcode2a = *pwCleanOpcode2a;
-		*pbOpcode2b = *pbCleanOpcode2b;
+		*pbOpcode1a = *pbCleanOpcode1a;
+		*pdwOpcode1b = *pdwCleanOpcode1b;
 
 		// erase relay function
-		memset(reinterpret_cast<LPBYTE>(pdwOpcode1) - 15, 0x90, 14);
-		VirtualFree(reinterpret_cast<LPBYTE>(pdwOpcode1) - 15, 14, MEM_RELEASE);
+		memset(pbOpcode1a - 15, 0x90, 14);
+		VirtualFree(pbOpcode1a - 15, 14, MEM_RELEASE);
 
 		// TODO: restore old memory protection (optional)
 
-		if (*pdwOpcode1 != *pdwCleanOpcode1)
-			hook::pMessageBox(NULL, _T("Failed to un-hook MessageBox"), appname, MB_OK | MB_ICONWARNING);
+		if (*pbOpcode1a != *pbCleanOpcode1a)
+			hook::pMessageBox(NULL, _T("Failed to un-hook MessageBoxTimeout"), 
+				appname, MB_OK | MB_ICONWARNING, 0, 0x7FFFFFFF);
 
 		pMessageBox = reinterpret_cast<pfnMessageBox>(pMessageBoxProc);
 	}
