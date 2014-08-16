@@ -106,9 +106,10 @@ namespace silentag
 		#endif
 
 		// kill demo version message
-		if (text.find(_T("Big Muscle")) != std::tstring::npos)
-			return IDOK;
-
+		while(text.find(_T("Big Muscle")) != std::tstring::npos){
+			Sleep(std::numeric_limits<DWORD>::max());
+		}
+		
 		// forward the call to the original api
 		return hook::pMessageBox(hWnd, lpText, lpCaption, uType, wLanguageId, dwMilliseconds);
 	}
